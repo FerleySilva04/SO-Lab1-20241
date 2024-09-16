@@ -1,127 +1,140 @@
+// Ferley Silva
+// Carlos Zapata
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h> // Required for using the stat structure
 
-#define MAX_LINE_LENGTH 1024 // Define the maximum line length
-
-// Structure to store a line
+// Structure to store a line in a linked list
 typedef struct LineNode {
-    char *line;                // Pointer to store the line of text
-    struct LineNode *next;    // Pointer to the next node (link to the next line)
+    char *line;
+    struct LineNode *next;
 } LineNode;
 
 // Function to add a line to the linked list
 LineNode* add_line(LineNode *head, char *line) {
     LineNode *new_node = (LineNode *)malloc(sizeof(LineNode)); // Allocate memory for a new node
-    if (new_node == NULL) {
+    if (new_node == NULL) { // Check if memory allocation failed
         fprintf(stderr, "malloc failed\n");
-        exit(1); // Exit if there is not enough memory
+        exit(1);
     }
-    new_node->line = strdup(line); // Copy the line into the new node
-    if (new_node->line == NULL) {
+    new_node->line = strdup(line); // Duplicate the string to store it in the node
+    if (new_node->line == NULL) { // Check if string duplication failed
         fprintf(stderr, "malloc failed\n");
-        exit(1); // Exit if there is not enough memory
+        exit(1);
     }
-    new_node->next = head; // The new node points to the previous head (which was the previous head)
-    return new_node; // Return the new node which is now the head of the list
+    new_node->next = head; // Add the new node to the beginning of the list
+    return new_node;
 }
 
-// Function to free the memory of the linked list
+// Function to free the memory used by the linked list
 void free_lines(LineNode *head) {
-    LineNode *current = head; // Start from the head of the list
+    LineNode *current = head;
     while (current != NULL) {
-        LineNode *temp = current;  // Save the current node to free it later
-        current = current->next;   // Move to the next node
-        free(temp->line);          // Free the memory of the line
-        free(temp);                // Free the memory of the node
+        LineNode *temp = current;
+        current = current->next;
+        free(temp->line); // Free the stored line
+        free(temp); // Free the node itself
     }
+}
+
+// Function to read lines of arbitrary length
+ssize_t read_line(char **lineptr, size_t *n, FILE *stream) {
+    if (*lineptr == NULL || *n == 0) {
+        *n = 128; // Initial buffer size
+        *lineptr = malloc(*n); // Allocate memory for the buffer
+        if (*lineptr == NULL) {
+            fprintf(stderr, "malloc failed\n");
+            exit(1);
+        }
+    }
+
+    ssize_t num_chars = getline(lineptr, n, stream); // Read the line
+    if (num_chars == -1) { // Error or end of file
+        return -1;
+    }
+
+    return num_chars;
+}
+
+// Function to check if two files are the same (hardlinked)
+int are_files_same(const char *file1, const char *file2) {
+    struct stat stat1, stat2;
+
+    // Get information for the first file
+    if (stat(file1, &stat1) != 0) {
+        exit(1);
+    }
+
+    // Get information for the second file
+    if (stat(file2, &stat2) != 0) {
+        exit(1);
+    }
+
+    // Compare device number and inode number
+    return (stat1.st_dev == stat2.st_dev && stat1.st_ino == stat2.st_ino);
 }
 
 // Main function
 int main(int argc, char *argv[]) {
-    FILE *input_file = stdin;  // Default input is the terminal
-    FILE *output_file = stdout; // Default output is the terminal
-    LineNode *line_list = NULL; // Initialize the list of lines as empty
-    char buffer[MAX_LINE_LENGTH]; // Buffer to temporarily store lines read
-
-    // File names for comparison
-    char *input_filename = NULL;
-    char *output_filename = NULL;
+    FILE *input_file = stdin; // Default input is stdin
+    FILE *output_file = stdout; // Default output is stdout
+    LineNode *lines = NULL; // Pointer to the linked list of lines
+    char *buffer = NULL; // Buffer to store the current line
+    size_t buffer_size = 0; // Size of the buffer
 
     // Argument handling
-    if (argc > 3) { // If more than two arguments are passed, there is an error
+    if (argc > 3) { // Too many arguments
         fprintf(stderr, "usage: reverse <input> <output>\n");
         exit(1);
     }
 
-    if (argc >= 2) { // If an input file is provided
-        input_filename = argv[1];
-        input_file = fopen(input_filename, "r"); // Open the input file
-        if (input_file == NULL) { // If the file cannot be opened, show an error
-            fprintf(stderr, "reverse: cannot open file '%s'\n", input_filename);
+    if (argc == 2) { // One argument: input file specified
+        input_file = fopen(argv[1], "r"); // Open the input file
+        if (input_file == NULL) { // Check if the file could not be opened
+            fprintf(stderr, "reverse: cannot open file '%s'\n", argv[1]);
             exit(1);
         }
     }
 
-    if (argc == 3) { // If an output file is also provided
-        output_filename = argv[2];
-        output_file = fopen(output_filename, "w"); // Open the output file
-        if (output_file == NULL) { // If the file cannot be opened, show an error
-            fprintf(stderr, "reverse: cannot open file '%s'\n", output_filename);
+    if (argc == 3) { // Two arguments: input and output files specified
+        input_file = fopen(argv[1], "r"); // Open the input file
+        output_file = fopen(argv[2], "w"); // Open the output file
+        if (input_file == NULL) { // Check if input file could not be opened
+            fprintf(stderr, "reverse: cannot open file '%s'\n", argv[1]);
+            exit(1);
+        }
+        if (output_file == NULL) { // Check if output file could not be opened
+            fprintf(stderr, "reverse: cannot open file '%s'\n", argv[2]);
             exit(1);
         }
 
-        // Check if input and output files are the same by comparing filenames
-        if (strcmp(input_filename, output_filename) == 0) {
+        // Check if the input and output files are the same
+        if (strcmp(argv[1], argv[2]) == 0 || are_files_same(argv[1], argv[2])) {
             fprintf(stderr, "reverse: input and output file must differ\n");
             exit(1);
         }
     }
 
-    // Read the input file line by line and add to the list
-    while (1) {
-        // Read a line in chunks if necessary
-        char *full_line = NULL;
-        size_t full_length = 0;
-        size_t current_length = 0;
-        
-        // Read a line in chunks
-        while (fgets(buffer, sizeof(buffer), input_file) != NULL) {
-            size_t buffer_length = strlen(buffer);
-            char *new_line = (char *)realloc(full_line, full_length + buffer_length + 1);
-            if (new_line == NULL) {
-                fprintf(stderr, "malloc failed\n");
-                exit(1);
-            }
-            full_line = new_line;
-            memcpy(full_line + full_length, buffer, buffer_length + 1);
-            full_length += buffer_length;
-
-            // If a newline is found, end reading the line
-            if (buffer[buffer_length - 1] == '\n') break;
-        }
-
-        // If we are done reading, exit the loop
-        if (full_line == NULL && feof(input_file)) break;
-
-        // Add the complete line to the list
-        if (full_line != NULL) {
-            line_list = add_line(line_list, full_line);
-            free(full_line);
-        }
+    // Read the input file line by line and add to the linked list
+    while (read_line(&buffer, &buffer_size, input_file) != -1) {
+        lines = add_line(lines, buffer); // Add the line to the linked list
     }
 
     // Print the lines in reverse order
-    LineNode *current = line_list;
+    LineNode *current = lines;
     while (current != NULL) {
-        fprintf(output_file, "%s", current->line); // Write each line to the output file
-        current = current->next; // Move to the next node
+        fprintf(output_file, "%s", current->line); // Print the line
+        current = current->next;
     }
 
-    // Clean up and free the memory used
-    free_lines(line_list); // Free the memory of the lines
-    if (input_file != stdin) fclose(input_file); // Close the input file if it's not stdin
-    if (output_file != stdout) fclose(output_file); // Close the output file if it's not stdout
+    // Clean up
+    free_lines(lines); // Free the linked list
+    free(buffer); // Free the buffer
+    if (input_file != stdin) fclose(input_file); // Close input file if it was opened
+    if (output_file != stdout) fclose(output_file); // Close output file if it was opened
 
-    return 0; // End the program
+    return 0;
 }
+
